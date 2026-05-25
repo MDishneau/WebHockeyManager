@@ -3,22 +3,23 @@ package com.hockeymanager.backend.generator;
 import com.hockeymanager.backend.model.*;
 import com.hockeymanager.backend.model.attributes.*;
 import com.hockeymanager.backend.model.personality.*;
+import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Random;
 
+@Service
 public class ProspectGenerator {
 
     private static final int PROSPECTS_PER_DRAFT = 224; // 7 rounds x 32 teams
 
-    private final Random          random;
-    private final PlayerGenerator playerGenerator;
+    private final Random random = new Random();
+    private final NameGenerator nameGenerator;
 
-    public ProspectGenerator(Random random) {
-        this.random          = random;
-        this.playerGenerator = new PlayerGenerator(random);
+    public ProspectGenerator(NameGenerator nameGenerator) {
+        this.nameGenerator = nameGenerator;
     }
 
     public List<Prospect> generateDraftClass() {
@@ -79,7 +80,7 @@ public class ProspectGenerator {
         PlayerPersonality personality = generateProspectPersonality(age);
 
         return new Player(
-                new NameGenerator(random).generateName(),
+                 nameGenerator.generateName(),
                 pos, age, attrs, personality
         );
     }

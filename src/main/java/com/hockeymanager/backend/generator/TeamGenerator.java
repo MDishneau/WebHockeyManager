@@ -1,9 +1,10 @@
 package com.hockeymanager.backend.generator;
 
 import com.hockeymanager.backend.model.*;
+import org.springframework.stereotype.Service;
 
 import java.util.Random;
-
+@Service
 public class TeamGenerator {
 
     /*
@@ -32,9 +33,11 @@ public class TeamGenerator {
 
     private final PlayerGenerator playerGenerator;
 
-    public TeamGenerator(Random random) {
-        this.playerGenerator = new PlayerGenerator(random);
+    public TeamGenerator(PlayerGenerator playerGenerator) {
+        this.playerGenerator = playerGenerator;
     }
+
+
 
     public void populateRoster(Team team) {
         // Forwards

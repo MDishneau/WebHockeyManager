@@ -3,6 +3,7 @@ package com.hockeymanager.ui.views;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.router.Route;
 
-@Route("playoffs")
-public class PlayoffView extends VerticalLayout {
+@Route("teamselection")
+public class TeamSelectionView extends VerticalLayout {
+
 }

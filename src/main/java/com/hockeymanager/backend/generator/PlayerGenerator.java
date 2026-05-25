@@ -4,17 +4,19 @@ import com.hockeymanager.backend.model.Position;
 import com.hockeymanager.backend.model.Player;
 import com.hockeymanager.backend.model.attributes.*;
 import com.hockeymanager.backend.model.personality.*;
+import org.springframework.stereotype.Service;
 
 import java.util.Random;
-
+@Service
 public class PlayerGenerator {
 
-    private final Random random;
+    private final Random random = new Random();
+
     private final NameGenerator nameGenerator;
 
-    public PlayerGenerator(Random random) {
-        this.random        = random;
-        this.nameGenerator = new NameGenerator(random);
+    public PlayerGenerator(NameGenerator nameGenerator) {
+
+        this.nameGenerator = nameGenerator;
     }
 
     public Player generate(Position position) {

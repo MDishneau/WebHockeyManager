@@ -1,8 +1,11 @@
 package com.hockeymanager.backend.generator;
 
+import org.springframework.stereotype.Service;
+
 import java.util.List;
 import java.util.Random;
 
+@Service
 public class NameGenerator {
 
     private static final List<String> FIRST_NAMES = List.of(
@@ -40,10 +43,10 @@ public class NameGenerator {
             "Young", "Zimmermann"
     );
 
-    private final Random random;
+    private final Random random = new Random();
 
-    public NameGenerator(Random random) {
-        this.random = random;
+    public NameGenerator() {
+
     }
 
     public String generateName() {

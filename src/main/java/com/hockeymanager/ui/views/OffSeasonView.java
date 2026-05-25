@@ -1,4 +1,8 @@
 package com.hockeymanager.ui.views;
 
-public class OffSeasonView {
+import com.vaadin.flow.component.orderedlayout.VerticalLayout;
+import com.vaadin.flow.router.Route;
+
+@Route("offseason")
+public class OffSeasonView extends VerticalLayout {
 }

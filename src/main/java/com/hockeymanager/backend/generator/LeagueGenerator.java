@@ -1,10 +1,11 @@
 package com.hockeymanager.backend.generator;
 
 import com.hockeymanager.backend.model.*;
+import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Random;
-
+@Service
 public class LeagueGenerator {
 
     // All 32 NHL franchises with market size
@@ -49,8 +50,8 @@ public class LeagueGenerator {
 
     private final TeamGenerator teamGenerator;
 
-    public LeagueGenerator(Random random) {
-        this.teamGenerator = new TeamGenerator(random);
+    public LeagueGenerator(TeamGenerator teamGenerator) {
+        this.teamGenerator = teamGenerator;
     }
 
     public League generate(String leagueName) {

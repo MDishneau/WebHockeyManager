@@ -20,22 +20,26 @@ import com.vaadin.flow.server.auth.AnonymousAllowed;
 import com.vaadin.flow.theme.lumo.LumoUtility;
 
 @Layout
-@Push
 @AnonymousAllowed
 public class MainLayout extends AppLayout {
 
     private final GameSession session;
     public final SideNav nav = new SideNav();
+
     public MainLayout(GameSession session) {
         this.session = session;
         setPrimarySection(Section.DRAWER);
         addToDrawer(createDrawerContent());
         addToNavbar(true, createNavbarContent());
-        this.session.addGamePhaseListener(this::updateNav);
+        this.session.addGamePhaseListener(() -> {
+            getUI().ifPresent(ui -> {
+                ui.access(this::updateNav);
+            });
+        });
     }
 
     public void updateNav() {
-        createDrawerContent();
+        addToDrawer(createDrawerContent());
     }
 
     private Component createNavbarContent() {

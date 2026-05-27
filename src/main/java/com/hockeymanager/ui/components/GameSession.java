@@ -104,7 +104,7 @@ public class GameSession  {
                 league, new GameSimulator(), schedule, seasonStart);
         this.phase = SeasonPhase.REGULAR_SEASON;
         if(this.onChange != null) {
-        this.onChange.run();
+            this.onChange.run();
         }
     }
 

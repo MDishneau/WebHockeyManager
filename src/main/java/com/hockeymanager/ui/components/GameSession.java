@@ -1,16 +1,348 @@
 package com.hockeymanager.ui.components;
 
-import com.hockeymanager.backend.manager.SeasonManager;
+import com.hockeymanager.backend.engine.GameResult;
+import com.hockeymanager.backend.engine.GameSimulator;
+import com.hockeymanager.backend.engine.PlayoffSimulator;
+import com.hockeymanager.backend.generator.LeagueGenerator;
+import com.hockeymanager.backend.generator.NameGenerator;
+import com.hockeymanager.backend.generator.ProspectGenerator;
+import com.hockeymanager.backend.generator.TeamGenerator;
+import com.hockeymanager.backend.manager.*;
 import com.hockeymanager.backend.model.*;
+import com.hockeymanager.ui.layouts.MainLayout;
+import com.vaadin.flow.component.UI;
+import com.vaadin.flow.server.VaadinSession;
 import com.vaadin.flow.spring.annotation.UIScope;
 import org.springframework.stereotype.Component;
 
+
+import java.util.*;
+import java.util.stream.Collectors;
+
+
+
+/**
+ * Central game state holder for one UI session.
+ * Replaces GameContext + CareerLoop from the console game.
+ * All views inject this bean to read/write game state.
+ */
 @Component
 @UIScope
-public class GameSession {
-    public League league;
+public class GameSession  {
+    private Runnable onChange;
+    private final NameGenerator nameGenerator;
+    private final TeamGenerator teamGenerator;
+    // ── Core state ──────────────────────────────────────────────────
+    private League        league;
+    private Team          userTeam;
     private SeasonManager seasonManager;
-    private Team userTeam;
-    // getters/setters
-}
+    private NewsService   newsService;
+    private SeasonPhase   phase = SeasonPhase.REGULAR_SEASON;
+    private int           year  = 2024;
 
+    // ── Playoff state ───────────────────────────────────────────────
+    private PlayoffBracket    playoffBracket;
+    private List<Team>        lastPlayoffTeams = new ArrayList<>();
+    private final PlayoffSimulator playoffSimulator = new PlayoffSimulator();
+
+    // ── Offseason state ─────────────────────────────────────────────
+    private ScoutingService   scoutingService;
+    private List<Prospect>    draftClass;
+    private DraftEngine       draftEngine;
+    private FreeAgentPool     freeAgentPool;
+    private FreeAgencyEngine  freeAgencyEngine;
+    private SalaryCapManager  salaryCapManager;
+    private ContractEngine    contractEngine;
+    private boolean           scoutingDone = false;
+    private boolean           draftDone    = false;
+    private boolean           freeAgencyDone = false;
+
+    private boolean initialized = false;
+
+    public GameSession(NameGenerator nameGenerator, TeamGenerator teamGenerator) {
+        this.nameGenerator = nameGenerator;
+        this.teamGenerator = teamGenerator;
+    }
+
+    public void addGamePhaseListener(Runnable onChange) {
+        this.onChange = onChange;
+    }
+
+    // ── Initialization ───────────────────────────────────────────────
+
+    public void initNewGame(Team selectedTeam) {
+        Random random = new Random();
+        this.league      = new LeagueGenerator(teamGenerator).generate("Hockey Manager League");
+
+        // Replace one random team with the selected team data (it was already generated)
+        // Actually selectedTeam comes from the league, so we just store reference
+        this.userTeam    = selectedTeam;
+        this.newsService = new NewsService();
+        this.contractEngine = new ContractEngine(random);
+        this.salaryCapManager = new SalaryCapManager();
+
+        startNewSeason();
+        this.initialized = true;
+    }
+
+    public void initWithLeague(League league, Team selectedTeam) {
+        Random random = new Random();
+        this.league       = league;
+        this.userTeam     = selectedTeam;
+        this.newsService  = new NewsService();
+        this.contractEngine = new ContractEngine(random);
+        this.salaryCapManager = new SalaryCapManager();
+        startNewSeason();
+        this.initialized  = true;
+    }
+
+    private void startNewSeason() {
+        GameDate seasonStart = new GameDate(year, 10, 4);
+        List<ScheduledGame> schedule = new ScheduleGenerator()
+                .generate(league.getTeams(), seasonStart);
+        this.seasonManager = new SeasonManager(
+                league, new GameSimulator(), schedule, seasonStart);
+        this.phase = SeasonPhase.REGULAR_SEASON;
+        if(this.onChange != null) {
+            this.onChange.run();
+        }
+    }
+
+    // ── Simulation ───────────────────────────────────────────────────
+
+    public List<GameResult> simNextGame() {
+        List<GameResult> results = seasonManager.simOneGame();
+        postSimNews(results);
+        checkSeasonEnd();
+        return results;
+    }
+
+    public List<GameResult> simDay() {
+        List<GameResult> results = seasonManager.simDay();
+        postSimNews(results);
+        checkSeasonEnd();
+        return results;
+    }
+
+    public List<GameResult> simWeek() {
+        List<GameResult> results = seasonManager.simWeek();
+        postSimNews(results);
+        checkSeasonEnd();
+        return results;
+    }
+
+    public List<GameResult> simSeason() {
+        List<GameResult> results = seasonManager.simSeason();
+        postSimNews(results);
+        checkSeasonEnd();
+        return results;
+    }
+
+    private void postSimNews(List<GameResult> results) {
+        for (GameResult r : results) {
+            String headline = formatResult(r);
+            boolean mine = isMyTeamGame(r);
+            newsService.addHeadline(
+                    seasonManager.getCurrentDate(),
+                    headline,
+                    mine ? NewsEvent.Category.GAME_RESULT : NewsEvent.Category.LEAGUE_NEWS,
+                    mine ? userTeam : null);
+        }
+    }
+
+    private void checkSeasonEnd() {
+        if (seasonManager.isSeasonOver() && phase == SeasonPhase.REGULAR_SEASON) {
+            beginPlayoffs();
+        }
+    }
+
+    // ── Playoffs ─────────────────────────────────────────────────────
+
+    public void beginPlayoffs() {
+        phase = SeasonPhase.PLAYOFFS;
+        List<Team> standings = league.getStandings();
+        lastPlayoffTeams = new ArrayList<>(standings.subList(0, Math.min(16, standings.size())));
+        playoffBracket = new PlayoffBracket(lastPlayoffTeams);
+        if(this.onChange != null) {
+            this.onChange.run();
+        }
+    }
+
+    public void simPlayoffGame() {
+        if (playoffBracket == null || playoffBracket.isOver()) return;
+        for (PlayoffSeries series : playoffBracket.getCurrentRoundSeries()) {
+            if (!series.isOver()) {
+                Team home = series.getNextHomeTeam();
+                Team away = series.getNextAwayTeam();
+                GameResult result = playoffSimulator.simulateGame(home, away);
+                series.addGame(result);
+                boolean mine = home == userTeam || away == userTeam;
+                String headline = String.format("%s %d-%d %s (Game %d — %s)",
+                        home.getFullName(), result.getHomeScore(),
+                        result.getAwayScore(), away.getFullName(),
+                        series.getGameCount(), series.getRoundName());
+                newsService.addHeadline(seasonManager.getCurrentDate(), headline,
+                        mine ? NewsEvent.Category.GAME_RESULT : NewsEvent.Category.LEAGUE_NEWS,
+                        mine ? userTeam : null);
+                if (series.isOver() && series.getWinner() != null) {
+                    newsService.addHeadline(seasonManager.getCurrentDate(),
+                            series.getWinner().getFullName() + " win the series " +
+                                    series.getHigherSeedWins() + "-" + series.getLowerSeedWins(),
+                            NewsEvent.Category.LEAGUE_NEWS, null);
+                }
+                break;
+            }
+        }
+        if (playoffBracket.isCurrentRoundOver()) {
+            playoffBracket.advanceRound();
+        }
+        if (playoffBracket.isOver()) {
+            Team champ = playoffBracket.getChampion();
+            newsService.addHeadline(seasonManager.getCurrentDate(),
+                    "🏆 " + champ.getFullName() + " win the Stanley Cup!",
+                    NewsEvent.Category.LEAGUE_NEWS, null);
+            phase = SeasonPhase.OFFSEASON;
+        }
+    }
+
+    public void simPlayoffRound() {
+        if (playoffBracket == null) return;
+        for (PlayoffSeries series : playoffBracket.getCurrentRoundSeries()) {
+            while (!series.isOver()) simPlayoffGame();
+        }
+        if (playoffBracket.isCurrentRoundOver()) {
+            playoffBracket.advanceRound();
+        }
+        if (playoffBracket.isOver()) phase = SeasonPhase.OFFSEASON;
+    }
+
+    public void simAllPlayoffs() {
+        while (playoffBracket != null && !playoffBracket.isOver()) {
+            simPlayoffRound();
+        }
+        phase = SeasonPhase.OFFSEASON;
+    }
+
+    // ── Offseason setup ───────────────────────────────────────────────
+
+    public void beginOffseason() {
+        phase = SeasonPhase.OFFSEASON;
+        Random random = new Random();
+        if(this.onChange != null) {
+            this.onChange.run();
+        }
+
+        // Process retirements / age
+        new OffseasonManager(league).processOffseason();
+        new DevelopmentEngine(random).processLeagueDevelopment(league);
+
+        // Scouting
+        scoutingService = new ScoutingService();
+        draftClass = new ProspectGenerator(nameGenerator).generateDraftClass();
+        scoutingDone   = false;
+        draftDone      = false;
+        freeAgencyDone = false;
+
+        // Free agency
+        ContractEngine ce = new ContractEngine(random);
+        freeAgentPool  = new FreeAgentPool(ce);
+        freeAgentPool.collectFromLeague(league);
+        freeAgencyEngine = new FreeAgencyEngine(ce, salaryCapManager, random);
+        contractEngine   = ce;
+    }
+
+    public void finalizeScouting() {
+        scoutingService.applyScoutingToClass(draftClass);
+        scoutingDone = true;
+    }
+
+    public void beginDraft() {
+        List<Team> allTeams = new ArrayList<>(league.getStandings());
+        Collections.reverse(allTeams);
+        Set<Team> playoffSet = new HashSet<>(lastPlayoffTeams);
+        List<Team> draftOrder = new DraftLottery(new Random()).runLottery(allTeams, playoffSet);
+        draftEngine = new DraftEngine(draftOrder, draftClass, userTeam);
+    }
+
+    public void completeDraft() {
+        draftDone = true;
+    }
+
+    public void completeFreeAgency() {
+        freeAgencyDone = true;
+    }
+
+    public void beginNextSeason() {
+        year++;
+        startNewSeason();
+        // Reset all offseason flags
+        scoutingDone   = false;
+        draftDone      = false;
+        freeAgencyDone = false;
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────────
+
+
+    public boolean isMyTeamGame(GameResult r) {
+        return r.getHomeTeam() == userTeam || r.getAwayTeam() == userTeam;
+    }
+
+    public String formatResult(GameResult r) {
+        String base = r.getHomeTeam().getFullName() + " " + r.getHomeScore()
+                + " - " + r.getAwayScore() + " " + r.getAwayTeam().getFullName()
+                + (r.isOvertime() ? " (OT)" : "");
+        if (isMyTeamGame(r)) {
+            boolean won = r.getWinner() == userTeam;
+            return (won ? "✓ " : "✗ ") + base;
+        }
+        return base;
+    }
+
+    public boolean isUserEliminated() {
+        if (playoffBracket == null) return true;
+        if (!lastPlayoffTeams.contains(userTeam)) return true;
+        for (List<PlayoffSeries> round : playoffBracket.getRounds()) {
+            for (PlayoffSeries s : round) {
+                if (s.isOver() && s.getLoser() == userTeam) return true;
+            }
+        }
+        return false;
+    }
+
+    public String getNextGameDisplay() {
+        return seasonManager.getSchedule().stream()
+                .filter(g -> !g.isPlayed()
+                        && (g.getHomeTeam() == userTeam || g.getAwayTeam() == userTeam))
+                .findFirst()
+                .map(g -> {
+                    boolean home = g.getHomeTeam() == userTeam;
+                    String opp = home ? g.getAwayTeam().getFullName()
+                            : g.getHomeTeam().getFullName();
+                    return g.getDate() + "  " + (home ? "vs " : "@ ") + opp;
+                })
+                .orElse("No upcoming games");
+    }
+
+    // ── Getters ────────────────────────────────────────────────────────
+
+    public boolean isInitialized()          { return initialized; }
+    public League getLeague()               { return league; }
+    public Team getUserTeam()               { return userTeam; }
+    public SeasonManager getSeasonManager() { return seasonManager; }
+    public NewsService getNewsService()     { return newsService; }
+    public SeasonPhase getPhase()           { return phase; }
+    public int getYear()                    { return year; }
+    public PlayoffBracket getPlayoffBracket()  { return playoffBracket; }
+    public List<Team> getLastPlayoffTeams() { return lastPlayoffTeams; }
+    public ScoutingService getScoutingService() { return scoutingService; }
+    public List<Prospect> getDraftClass()   { return draftClass; }
+    public DraftEngine getDraftEngine()     { return draftEngine; }
+    public FreeAgentPool getFreeAgentPool() { return freeAgentPool; }
+    public FreeAgencyEngine getFreeAgencyEngine() { return freeAgencyEngine; }
+    public SalaryCapManager getSalaryCapManager() { return salaryCapManager; }
+    public ContractEngine getContractEngine()     { return contractEngine; }
+    public boolean isScoutingDone()         { return scoutingDone; }
+    public boolean isDraftDone()            { return draftDone; }
+    public boolean isFreeAgencyDone()       { return freeAgencyDone; }
+}

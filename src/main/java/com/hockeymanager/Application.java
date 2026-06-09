@@ -17,3 +17,5 @@ public class Application implements AppShellConfigurator {
     }
 
 }
+
+// supabase password: uhWCoh0nZTXjsUFR

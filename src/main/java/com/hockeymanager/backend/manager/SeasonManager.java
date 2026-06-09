@@ -3,6 +3,7 @@ package com.hockeymanager.backend.manager;
 import com.hockeymanager.backend.engine.GameResult;
 import com.hockeymanager.backend.engine.GameSimulator;
 import com.hockeymanager.backend.model.*;
+import java.util.Optional;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -23,6 +24,38 @@ public class SeasonManager {
     }
 
     // --- Advance methods ---
+
+    /**
+     * Advances to the user team's next unplayed game date, sims all games
+     * on that date (whole league), and returns all results from that day.
+     * This keeps the schedule consistent while giving the user a game to watch.
+     */
+    public List<GameResult> simUpToUserGame(Team userTeam) {
+        List<GameResult> results = new ArrayList<>();
+
+        // Find the date of the user's next unplayed game
+        Optional<GameDate> userNextDate = schedule.stream()
+                .filter(g -> !g.isPlayed()
+                        && (g.getHomeTeam() == userTeam || g.getAwayTeam() == userTeam))
+                .map(ScheduledGame::getDate)
+                .findFirst();
+
+        if (userNextDate.isEmpty()) {
+            return results; // no more user games
+        }
+
+        GameDate targetDate = userNextDate.get();
+
+        // Sim every unplayed game up to and including that date
+        for (ScheduledGame game : schedule) {
+            if (!game.isPlayed() && !game.getDate().isAfter(targetDate)) {
+                results.add(playGame(game));
+            }
+        }
+
+        currentDate = targetDate.nextDay();
+        return results;
+    }
 
     public List<GameResult> simOneGame() {
         List<GameResult> results = new ArrayList<>();

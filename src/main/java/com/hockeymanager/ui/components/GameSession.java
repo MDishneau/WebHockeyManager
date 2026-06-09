@@ -111,7 +111,8 @@ public class GameSession  {
     // ── Simulation ───────────────────────────────────────────────────
 
     public List<GameResult> simNextGame() {
-        List<GameResult> results = seasonManager.simOneGame();
+        // Advance to the date of the user's next unplayed game, sim everything on that date
+        List<GameResult> results = seasonManager.simUpToUserGame(userTeam);
         postSimNews(results);
         checkSeasonEnd();
         return results;
@@ -168,31 +169,37 @@ public class GameSession  {
         }
     }
 
-    public void simPlayoffGame() {
-        if (playoffBracket == null || playoffBracket.isOver()) return;
-        for (PlayoffSeries series : playoffBracket.getCurrentRoundSeries()) {
+    /**
+     * Sims one game in the user's active series (if not over), then one game
+     * in every other active series to keep the round moving in lockstep.
+     * Returns results for display: user's game first, then others.
+     */
+    public List<GameResult> simPlayoffGame() {
+        if (playoffBracket == null || playoffBracket.isOver()) return List.of();
+
+        List<GameResult> results = new ArrayList<>();
+        List<PlayoffSeries> activeSeries = playoffBracket.getCurrentRoundSeries().stream()
+                .filter(s -> !s.isOver())
+                .collect(Collectors.toList());
+
+        // Find user's series in this round (null if eliminated or not in round)
+        PlayoffSeries userSeries = activeSeries.stream()
+                .filter(s -> s.getHigherSeed() == userTeam || s.getLowerSeed() == userTeam)
+                .findFirst().orElse(null);
+
+        // Sim user's series first so the result is front and center
+        if (userSeries != null) {
+            results.add(simSeriesGame(userSeries));
+        }
+
+        // Sim one game in each other active series
+        for (PlayoffSeries series : activeSeries) {
+            if (series == userSeries) continue;
             if (!series.isOver()) {
-                Team home = series.getNextHomeTeam();
-                Team away = series.getNextAwayTeam();
-                GameResult result = playoffSimulator.simulateGame(home, away);
-                series.addGame(result);
-                boolean mine = home == userTeam || away == userTeam;
-                String headline = String.format("%s %d-%d %s (Game %d — %s)",
-                        home.getFullName(), result.getHomeScore(),
-                        result.getAwayScore(), away.getFullName(),
-                        series.getGameCount(), series.getRoundName());
-                newsService.addHeadline(seasonManager.getCurrentDate(), headline,
-                        mine ? NewsEvent.Category.GAME_RESULT : NewsEvent.Category.LEAGUE_NEWS,
-                        mine ? userTeam : null);
-                if (series.isOver() && series.getWinner() != null) {
-                    newsService.addHeadline(seasonManager.getCurrentDate(),
-                            series.getWinner().getFullName() + " win the series " +
-                                    series.getHigherSeedWins() + "-" + series.getLowerSeedWins(),
-                            NewsEvent.Category.LEAGUE_NEWS, null);
-                }
-                break;
+                results.add(simSeriesGame(series));
             }
         }
+
         if (playoffBracket.isCurrentRoundOver()) {
             playoffBracket.advanceRound();
         }
@@ -202,18 +209,42 @@ public class GameSession  {
                     "🏆 " + champ.getFullName() + " win the Stanley Cup!",
                     NewsEvent.Category.LEAGUE_NEWS, null);
             phase = SeasonPhase.OFFSEASON;
+            if (onChange != null) onChange.run();
         }
+        return results;
+    }
+
+    private GameResult simSeriesGame(PlayoffSeries series) {
+        Team home = series.getNextHomeTeam();
+        Team away = series.getNextAwayTeam();
+        GameResult result = playoffSimulator.simulateGame(home, away);
+        series.addGame(result);
+        boolean mine = home == userTeam || away == userTeam;
+        String headline = String.format("%s %d-%d %s (Game %d — %s)",
+                home.getFullName(), result.getHomeScore(),
+                result.getAwayScore(), away.getFullName(),
+                series.getGameCount(), series.getRoundName());
+        newsService.addHeadline(seasonManager.getCurrentDate(), headline,
+                mine ? NewsEvent.Category.GAME_RESULT : NewsEvent.Category.LEAGUE_NEWS,
+                mine ? userTeam : null);
+        if (series.isOver() && series.getWinner() != null) {
+            newsService.addHeadline(seasonManager.getCurrentDate(),
+                    series.getWinner().getFullName() + " win the series " +
+                            series.getHigherSeedWins() + "-" + series.getLowerSeedWins(),
+                    NewsEvent.Category.LEAGUE_NEWS, null);
+        }
+        return result;
     }
 
     public void simPlayoffRound() {
         if (playoffBracket == null) return;
-        for (PlayoffSeries series : playoffBracket.getCurrentRoundSeries()) {
-            while (!series.isOver()) simPlayoffGame();
+        // Sim all remaining games in each active series until the round is done
+        while (!playoffBracket.isCurrentRoundOver() && !playoffBracket.isOver()) {
+            simPlayoffGame();
         }
-        if (playoffBracket.isCurrentRoundOver()) {
+        if (playoffBracket.isCurrentRoundOver() && !playoffBracket.isOver()) {
             playoffBracket.advanceRound();
         }
-        if (playoffBracket.isOver()) phase = SeasonPhase.OFFSEASON;
     }
 
     public void simAllPlayoffs() {
@@ -283,6 +314,18 @@ public class GameSession  {
 
     // ── Helpers ────────────────────────────────────────────────────────
 
+    public int userGamesPlayed() {
+        return (int) seasonManager.getSchedule().stream()
+                .filter(g -> g.isPlayed()
+                        && (g.getHomeTeam() == userTeam || g.getAwayTeam() == userTeam))
+                .count();
+    }
+
+    public int userTotalGames() {
+        return (int) seasonManager.getSchedule().stream()
+                .filter(g -> g.getHomeTeam() == userTeam || g.getAwayTeam() == userTeam)
+                .count();
+    }
 
     public boolean isMyTeamGame(GameResult r) {
         return r.getHomeTeam() == userTeam || r.getAwayTeam() == userTeam;

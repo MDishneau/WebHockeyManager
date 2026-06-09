@@ -8,11 +8,13 @@ import com.hockeymanager.ui.layouts.MainLayout;
 import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
+import com.vaadin.flow.component.details.Details;
 import com.vaadin.flow.component.dialog.Dialog;
 import com.vaadin.flow.component.html.*;
 import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.notification.NotificationVariant;
 import com.vaadin.flow.component.orderedlayout.FlexLayout;
+import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.router.BeforeEnterEvent;
@@ -102,7 +104,7 @@ public class DashboardView extends VerticalLayout implements BeforeEnterObserver
         Span nextGame = new Span("Next game: " + session.getNextGameDisplay());
         nextGame.addClassNames(LumoUtility.TextColor.SECONDARY, LumoUtility.FontSize.SMALL);
 
-        Span progress = new Span("Season: " + sm.gamesPlayed() + " / " + sm.totalGames() + " games played");
+        Span progress = new Span("Games: " + session.userGamesPlayed() + " / " + session.userTotalGames());
         progress.addClassNames(LumoUtility.TextColor.SECONDARY, LumoUtility.FontSize.SMALL);
 
         card.add(teamName, record, new Div(nextGame), new Div(progress));
@@ -200,28 +202,47 @@ public class DashboardView extends VerticalLayout implements BeforeEnterObserver
         resultsLog.removeAll();
 
         if (results.isEmpty()) {
-            resultsLog.add(new Span("No games played — advanced to next game day."));
+            resultsLog.add(new Span("No games played — already at next game day."));
             return;
         }
+
+        // Separate user's game(s) from the rest
+        List<GameResult> myGames = results.stream()
+                .filter(session::isMyTeamGame).collect(java.util.stream.Collectors.toList());
+        List<GameResult> otherGames = results.stream()
+                .filter(r -> !session.isMyTeamGame(r)).collect(java.util.stream.Collectors.toList());
 
         H3 header = new H3(title);
         header.addClassNames(LumoUtility.Margin.Bottom.SMALL);
         resultsLog.add(header);
 
-        for (GameResult r : results) {
+        // Always show user's game prominently
+        for (GameResult r : myGames) {
             Div row = new Div();
-            boolean mine = session.isMyTeamGame(r);
-            String text = session.formatResult(r);
-
-            Span label = new Span((mine ? "► " : "   ") + text);
-            if (mine) {
-                boolean won = r.getWinner() == session.getUserTeam();
-                label.getStyle().set("color", won ? "var(--lumo-success-color)"
-                        : "var(--lumo-error-color)");
-                label.addClassNames(LumoUtility.FontWeight.BOLD);
-            }
+            row.addClassNames(LumoUtility.Margin.Bottom.XSMALL);
+            boolean won = r.getWinner() == session.getUserTeam();
+            Span label = new Span("► " + session.formatResult(r));
+            label.getStyle().set("color", won ? "var(--lumo-success-color)" : "var(--lumo-error-color)");
+            label.addClassNames(LumoUtility.FontWeight.BOLD, LumoUtility.FontSize.MEDIUM);
             row.add(label);
             resultsLog.add(row);
+        }
+
+        // Show other league results in a compact collapsed section
+        if (!otherGames.isEmpty()) {
+            Details leagueResults = new Details();
+            leagueResults.setSummaryText("Other results (" + otherGames.size() + ")");
+            leagueResults.setOpened(false);
+            VerticalLayout leagueLayout = new VerticalLayout();
+            leagueLayout.setPadding(false);
+            leagueLayout.setSpacing(false);
+            for (GameResult r : otherGames) {
+                Span s = new Span(session.formatResult(r));
+                s.addClassNames(LumoUtility.FontSize.SMALL, LumoUtility.TextColor.SECONDARY);
+                leagueLayout.add(s);
+            }
+            leagueResults.add(leagueLayout);
+            resultsLog.add(leagueResults);
         }
     }
 
@@ -247,7 +268,7 @@ public class DashboardView extends VerticalLayout implements BeforeEnterObserver
         record.addClassNames(LumoUtility.FontSize.LARGE, LumoUtility.FontWeight.BOLD);
         Span nextGame = new Span("Next game: " + session.getNextGameDisplay());
         nextGame.addClassNames(LumoUtility.TextColor.SECONDARY, LumoUtility.FontSize.SMALL);
-        Span progress = new Span("Season: " + sm.gamesPlayed() + " / " + sm.totalGames() + " games played");
+        Span progress = new Span("Games: " + session.userGamesPlayed() + " / " + session.userTotalGames());
         progress.addClassNames(LumoUtility.TextColor.SECONDARY, LumoUtility.FontSize.SMALL);
         statsCard.add(teamName, record, new Div(nextGame), new Div(progress));
     }

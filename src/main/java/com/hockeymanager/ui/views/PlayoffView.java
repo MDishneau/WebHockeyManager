@@ -10,6 +10,7 @@ import com.vaadin.flow.component.dialog.Dialog;
 import com.vaadin.flow.component.html.*;
 import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.notification.NotificationVariant;
+import com.vaadin.flow.component.details.Details;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.router.BeforeEnterEvent;
@@ -20,6 +21,7 @@ import com.vaadin.flow.server.auth.AnonymousAllowed;
 import com.vaadin.flow.theme.lumo.LumoUtility;
 
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Route(value = "playoffs", layout = MainLayout.class)
 @PageTitle("Playoffs — Hockey Manager")
@@ -27,6 +29,7 @@ import java.util.List;
 public class PlayoffView extends VerticalLayout implements BeforeEnterObserver {
 
     private final GameSession session;
+    private Div resultsLog;
 
     public PlayoffView(GameSession session) {
         this.session = session;
@@ -90,6 +93,11 @@ public class PlayoffView extends VerticalLayout implements BeforeEnterObserver {
         Div simSection = buildSimSection(eliminated, bracket);
         add(simSection);
 
+        // ── Results log ───────────────────────────────────────────────
+        resultsLog = new Div();
+        resultsLog.setWidthFull();
+        add(resultsLog);
+
         // ── Bracket display ───────────────────────────────────────────
         add(buildBracketDisplay(bracket));
     }
@@ -113,8 +121,9 @@ public class PlayoffView extends VerticalLayout implements BeforeEnterObserver {
         Button simGame = new Button("▶ Sim Next Game");
         simGame.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
         simGame.addClickListener(e -> {
-            session.simPlayoffGame();
+            List<com.hockeymanager.backend.engine.GameResult> results = session.simPlayoffGame();
             refreshView();
+            showPlayoffResults(results);
         });
 
         Button simRound = new Button("⏭ Sim Rest of Round");
@@ -227,6 +236,43 @@ public class PlayoffView extends VerticalLayout implements BeforeEnterObserver {
         dialog.getFooter().add(cancel, confirm);
         dialog.add(msg);
         dialog.open();
+    }
+
+    private void showPlayoffResults(List<com.hockeymanager.backend.engine.GameResult> results) {
+        if (resultsLog == null || results.isEmpty()) return;
+        resultsLog.removeAll();
+
+        List<com.hockeymanager.backend.engine.GameResult> myGames = results.stream()
+                .filter(session::isMyTeamGame).collect(Collectors.toList());
+        List<com.hockeymanager.backend.engine.GameResult> otherGames = results.stream()
+                .filter(r -> !session.isMyTeamGame(r)).collect(Collectors.toList());
+
+        for (com.hockeymanager.backend.engine.GameResult r : myGames) {
+            Div row = new Div();
+            row.addClassNames(LumoUtility.Margin.Bottom.XSMALL);
+            boolean won = r.getWinner() == session.getUserTeam();
+            Span label = new Span("► " + session.formatResult(r));
+            label.getStyle().set("color", won ? "var(--lumo-success-color)" : "var(--lumo-error-color)");
+            label.addClassNames(LumoUtility.FontWeight.BOLD, LumoUtility.FontSize.MEDIUM);
+            row.add(label);
+            resultsLog.add(row);
+        }
+
+        if (!otherGames.isEmpty()) {
+            Details leagueResults = new Details();
+            leagueResults.setSummaryText("Other series results (" + otherGames.size() + ")");
+            leagueResults.setOpened(false);
+            VerticalLayout inner = new VerticalLayout();
+            inner.setPadding(false);
+            inner.setSpacing(false);
+            for (com.hockeymanager.backend.engine.GameResult r : otherGames) {
+                Span s = new Span(session.formatResult(r));
+                s.addClassNames(LumoUtility.FontSize.SMALL, LumoUtility.TextColor.SECONDARY);
+                inner.add(s);
+            }
+            leagueResults.add(inner);
+            resultsLog.add(leagueResults);
+        }
     }
 
     private void refreshView() {
